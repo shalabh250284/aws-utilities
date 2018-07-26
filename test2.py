@@ -14,7 +14,7 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 
 # create formatter
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(levelname)7s - %(message)s')
 
 # add formatter to ch
 ch.setFormatter(formatter)
@@ -57,6 +57,20 @@ def getContainerID():
         exit(1)
     return ContainerID
 
+# Query ECS Data for Cluster Name 
+def getClusterName():
+    logger.debug("Inspecting ECS data for Cluster Name")
+    ECSMetadata = getECSMetadata()
+
+    logger.debug("Validate if we have the correct data")
+    if 'Cluster' in  ECSMetadata.keys():
+        logger.debug("Found Cluster Name in the data set")
+        clusterName = ECSMetadata['Cluster']
+    else:
+        logger.error("Cluster Name is not present in the dataset, Aborting!")
+        exit(1)
+    return clusterName
+
 # The Function queries EC2 Metadata URL and returns a response
 def getEC2Metadata():
     logger.debug("Querying EC2 Metadata URL for exploring data")	
@@ -91,4 +105,23 @@ def getRegionName():
         exit(1)
     return region
 
-getRegionName()
+# Adding attributes to Container Instances
+def putContainerAttributes():
+    logger.debug("Checking Current Region Name to initialize ECS calls")
+    region = getRegionName()
+    logger.info("Current region of this Instance is: " + region)
+    
+    logger.debug("Checking ContainerID to prepare for boto call")
+    containerID = getContainerID()
+    logger.info("ContainerID of this instance is: " + containerID)
+    
+    logger.debug("Checking Cluster Name to prepare for boto call")
+    clusterName = getClusterName()
+    logger.info("Cluster Name for this instance is: " + clusterName)
+
+    logger.debug("Initilizing boto call for ecs library")
+    client = boto3.client('ecs', region_name=region)
+
+    response = client.put_attributes(cluster=clusterName, attributes=[{ 'name': 'foo', 'value': 'bar', 'targetType': 'container-instance', 'targetId': containerID }, ] )
+
+putContainerAttributes()
