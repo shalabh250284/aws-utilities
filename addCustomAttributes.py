@@ -1,8 +1,10 @@
 #!/usr/bin/env python
+import sys
 import requests
 import json
 import boto3
 import logging
+import argparse
 
 
 # create logger
@@ -14,7 +16,7 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 
 # create formatter
-formatter = logging.Formatter('%(asctime)s - %(levelname)7s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(levelname)-7s - %(message)s')
 
 # add formatter to ch
 ch.setFormatter(formatter)
@@ -106,7 +108,7 @@ def getRegionName():
     return region
 
 # Adding attributes to Container Instances
-def putContainerAttributes():
+def putContainerAttributes(attributes):
     logger.debug("Checking Current Region Name to initialize ECS calls")
     region = getRegionName()
     logger.info("Current region of this Instance is: " + region)
@@ -122,6 +124,34 @@ def putContainerAttributes():
     logger.debug("Initilizing boto call for ecs library")
     client = boto3.client('ecs', region_name=region)
 
-    response = client.put_attributes(cluster=clusterName, attributes=[{ 'name': 'foo', 'value': 'bar', 'targetType': 'container-instance', 'targetId': containerID }, ] )
+    logger.info("Adding attributes to the Container ID: %s", containerID)
+    logger.debug("Itterating the attributes to add each one at a time")
 
-putContainerAttributes()
+    for name,value in attributes.items():
+        logger.info("Adding attribute: { %s: %s } to the Cluster", name, value)
+        try:
+            myResponse = client.put_attributes(cluster=clusterName, attributes=[{ 'name': name, 'value': value, 'targetType': 'container-instance', 'targetId': containerID }, ] )
+            logger.info("Attribute: { %s: %s } have been successfull added to Cluster Instance: %s", name, value, containerID)
+        except Exception as e:
+            logger.error("Failed to add attribute: { %s: %s } to the Cluster with exception: %s", name, value, e)
+            raise
+
+def main(attributes):
+    if len(sys.argv) != 2:
+        logger.error("Incorrect number of Arguments passed to the script, Expected 1 got %s", len(sys.argv) -1)
+        exit(1)
+    else:
+        try:
+            attributes = json.loads(sys.argv[1])
+            if isinstance(attributes,dict):
+                logger.info("Attributes to be added are: %s", attributes)
+            else:
+                logger.error("The data is not is the correct format, provide a valid dictonary")
+        except Exception as e:
+            logger.error("The data is not is the correct format, provide a valid dictonary")
+            raise
+    putContainerAttributes(attributes)
+
+if __name__ == '__main__':
+    main(sys.argv)
+
