@@ -25,7 +25,7 @@ logger.addHandler(ch)
 # The Function queries ECS Metadata URL and return a response
 def getECSMetadata():
     logger.debug("Querying ECS Metadata URL for exploring data")
-    
+
     url = "http://localhost:51678/v1/metadata"
     logger.debug("ECS Metadata URL is set to: " + url)
 
@@ -55,14 +55,40 @@ def getContainerID():
     else:
         logger.error("ContainerInstanceArn is not present in the dataset, Aborting!")
         exit(1)
-    return ContainerID 
+    return ContainerID
 
-url = "http://169.254.169.254/latest/dynamic/instance-identity/document"
+# The Function queries EC2 Metadata URL and returns a response
+def getEC2Metadata():
+    logger.debug("Querying EC2 Metadata URL for exploring data")	
+    url = "http://169.254.169.254/latest/dynamic/instance-identity/document"
+    logger.debug("EC2 Metadata URL is set to: " + url)
 
-myResponse = requests.get(url)
-if(myResponse.ok):
-    jData = json.loads(myResponse.content)
-    print jData
-else:
-  # If response code is not ok (200), print the resulting http error code with description
-    myResponse.raise_for_status()
+    logger.debug("Making a API call to EC2 URL")
+    myResponse = requests.get(url)
+
+    logger.debug("Validating the Response")
+    if(myResponse.ok):
+        logger.debug("Got a Valid response from ECS")
+        logger.debug("Converting the response into JSON")
+        jData = json.loads(myResponse.content)
+    else:
+        # If response code is not ok (200), print the resulting http error code with description
+        logger.error("Response code is not ok (200), printing the resulting http error code with description")
+        myResponse.raise_for_status()
+    return jData
+
+# Query EC2 Data for Current region
+def getRegionName():
+    logger.debug("Inspecting EC2 data for current Region")
+    ec2Metadata = getEC2Metadata()
+
+    logger.debug("Validate if we have the correct data")
+    if 'region' in  ec2Metadata.keys():
+        logger.debug("Found data, will extract Region now")
+        region = ec2Metadata['region']
+    else:
+        logger.error("Region is not present in the dataset, Aborting!")
+        exit(1)
+    return region
+
+getRegionName()
