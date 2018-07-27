@@ -127,62 +127,138 @@ def getInstanceId():
     return instanceId
 
 # Function to retrive the Value of a Tag applied to an EC2 instance
-def getTagValue(tagName):
+def getTagValue(tagName=None,instanceId=None):
+    logger.debug("Inspecting EC2 Information for extracting Tag Values")
     try:
         tagValue = ''
-        response = getEc2Info()
-        tags = response['Reservations'][0]['Instances'][0]['Tags']
-        for tag in tags:
-            if tag['Key'].lower() == tagName.lower():
-                tagValue = tag['Value']
-        if tagValue == '':
-            return False
+        
+        logger.info("Validating if Instance Id has been passed to the function")
+        if instanceId is None:
+            logger.info("Instance ID was not passed as a variable to the function, we will run it for current Instance Id")
+            instanceId = getInstanceId()
         else:
-            return tagValue
+            logger.info("Instance Id override is available, we will fetch information for InstanceId: %s", instanceId)
+
+        logger.info("Retriving EC2 information now")
+        response = getEc2Info(instanceId)
+
+        logger.info("Successfully retrived EC2 information, now extracting metadata about tags")
+        tags = response['Reservations'][0]['Instances'][0]['Tags']
+        if tagName is None:
+            logger.info("Since no specific Tag is asked, I will return all the tags")
+            return tags
+
+        logger.debug("Itterating over Tags to extract the requuested tag: %s", tagName)
+        for tag in tags:
+            logger.debug("Validating if the Key %s matches requested Tag Name %s", tag['Key'].lower(), tagName.lower())
+            if tag['Key'].lower() == tagName.lower():
+                logger.info("Found the Tag: %s, will return the Value", tagName)
+                tagValue = tag['Value']
+                if tagValue == '':
+                    logger.warn("Tag %s was found with a Null value", tagName)
+                else:
+                    logger.info("Returning the Tag Value now")
+                return tagValue
     except Exception as e:
         logger.error("Error fetching EC2 Tags: %s", e)
-        return False
+        raise
 
-# Function to retrive the Value of a Parameter used during stack creation
-def getParamValue(paramName):
+# Function to get the Stack Information of a current instance
+def getCfInfo(region='us-east-1'):
+    logger.debug("Inspecting Cloudformation to extract Parameters")
     try:
-        param_value = ''
-        ec2 = boto3.client('ec2', region_name=my_region)
-        cf = boto3.client('cloudformation', region_name=my_region)
-        ec2_cf_id = _tag_value('aws:cloudformation:stack-id')
+        paramValue = ''
+
+        logger.debug("Initiating a call to Cloudformation API to fetch the details")
+        cf = boto3.client('cloudformation', region_name=region)
+
+        logger.info("Find the Cloudformation Stack ID for the current instance")
+        ec2_cf_id = getTagValue('aws:cloudformation:stack-id')
+        logger.info("Cloudformation Id for this instance is: %s", ec2_cf_id)
+
         stack_overview = {}
+        logger.debug("We will not extract the details of the current stack: %s", ec2_cf_id)
         try:
-            stack_overview = cf.describe_stacks(StackName=ec2_cf_id)['Stacks'][0]
-        except:
-            logger.error("No parameter defined")
+            logger.debug("Making an API call to describe_stacks to fetch the stack information")
+            cfInfo = cf.describe_stacks(StackName=ec2_cf_id)['Stacks'][0]
+            return cfInfo
+        except Exception as e:
+            logger.error("Error fetching EC2 Parameters: %s", e)
+            raise
     except Exception as e:
         logger.error("Error fetching EC2 Parameters: %s", e)
-        return False
+        raise
+
+# Function to retrive the Value of a Parameter used during stack creation
+def getParamValue(paramName=None,region='us-east-1'):
+    logger.debug("Inspecting CF Information for extracting Parameter Values")
+    try:
+        paramValue = ''
+
+        logger.info("Retriving CF information now")
+        response = getCfInfo()
+
+        logger.info("Successfully retrived CF information, now extracting metadata about parameters")
+        parameters = response['Parameters']
+
+        if paramName is None:
+            logger.info("Since no specific parameter is asked, I will return all the parameters")
+            return parameters
+
+        logger.debug("Itterating over Parameters to extract the requuested parameter: %s", paramName)
+        for parameter in parameters:
+            logger.debug("Validating if the Key %s matches requested Parameter Name %s", parameter['ParameterKey'].lower(), paramName.lower())
+            if parameter['ParameterKey'].lower() == paramName.lower():
+                logger.info("Found the Parameter: %s, will return the Value", paramName)
+                paramValue = parameter['ParameterValue']
+                if paramValue == '':
+                    logger.warn("Parameter %s was found with a Null value", paramName)
+                else:
+                    logger.info("Returning the Parameter Value now")
+                return paramValue
+    except Exception as e:
+        logger.error("Error fetching EC2 Tags: %s", e)
+        raise
 
 # Function creates a Snapshot of the EBS volumes attached to the instance
-def create_snapshots(AppId):
-    stackName = _tag_value('aws:cloudformation:stack-name')
+def createSnapshots(AppId):
+    logger.info("Initiating a snapshot for this instance")
+    logger.debug("Finding the stack Name this Instance belongs to")
+    stackName = getTagValue('aws:cloudformation:stack-name')
+    logger.info("The Stack name of this Instance is %s. Backups will be tagged with the Stack Name", stackName)
+    logger.debug("Proceeding to prepare for Snapshots")
+
     try:
+        logger.debug("Checking all the Mounts configured in /proc/mounts")
         d = {}
         for i in file('/proc/mounts'):
             if i[0] == '/':
                 i = i.split()
                 d[i[0]] = i[1]
-        logger.info("starting a snap")
         
-        response = _ec2_info()
-        volumes = response['Reservations'][0]['Instances'][0]['BlockDevicemappings']
-        
+        logger.info("Fetchig EC2 information to grab Volumes from the mapped devices")
+        response = getEc2Info()
+        volumes = response['Reservations'][0]['Instances'][0]['BlockDeviceMappings']
+        logger.debug("Successfully retrived volume information %s", volumes) 
+
+        logger.debug("Iterating over the Volumes to Snapshot each of them")
         for vol in volumes:
+            logger.debug("Lets ensure that the Device is present in /proc/mounts")
             if d.has_key(vol['DeviceName']):
+                logger.debug("Device %s found in /proc/mounts, we will snapshot the disk by its VolumeId", vol['DeviceName'])
                 vol_id = vol['Ebs']['VolimeId']
                 snap_dec = AppId + d[vol['DeviceName']]
-            
+                logger.debug("Device details: Name: %s, volID: %s, snap_desc: %s", vol['DeviceName'], vol_id, snap_dec)
+
                 try:
+                    logger.info("Attempting Snapshot: VolumeId=%s and Description=%s", vol_id, snap_dec)
                     snap = ec2_client.create_snapshot(VolumeId=vol_id, Description=snap_dec)
                     snapshotId = snap['SnapshotId']
-                except:
-                    logger.error("snap failed")
+                    logger.info("Snapshot started with snapshotId: %s", snapshotId)
+                except Exception as e:
+                    logger.error("Snapshot failed to start for snapShotId: %s with error %s", snapshotId, e)
+                    raise
+                logger.debug("Since Snapshot is successful, We will tag the snapshot")
                 my_tags = [{
                             "Key" : "Name",
                             "Value": snap_dec
@@ -199,16 +275,18 @@ def create_snapshots(AppId):
                             "Key" : "Type",
                             "Value": "Automated"
                           }]
+                logger.info("Making an API call to tag the snapshot: %s with tags: %s", snapshotId, my_tags)
                 try:
                     ec2_client.create_tags(
                         Resources = [snapshotId],
                         Tags = mytags
                     )
-                except:
-                    logger.error("Tagging failed")
-                
-                logger.info("Now I will attempt to cleanip")
-                cleanup_snap(snap_desc,AppId)
+                    logger.info("Successfully tagged the Snapshot")
+                except Exception as e:
+                    logger.error("Failed to tag the Snapshot: %s. Failed with error %e", snapshotId, e)
+                    raise
+                logger.debug("As a post step, Now I will attempt to cleanup last snapShots created by this Automation")
+                cleanupSnapshots(snap_desc,AppId)
                 
             else:
                 logger.debug("I dont have a key")
@@ -216,8 +294,8 @@ def create_snapshots(AppId):
         logger.error("Error fetching EC2 Parameters: %s", e)
         return False
         
-
-def cleanup_snap(Name,AppId):
+'''
+def cleanupSnapshots(Name,AppId):
     stackName = _tag_value('aws:cloudformation:stack-name')
     filters = [
         { 'Name': 'tag:Name', 'Values': [Name], },
@@ -235,4 +313,5 @@ def cleanup_snap(Name,AppId):
                 ec2_client.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
             except Exception as e:
                 logger.error("Error Deleting snap: %s", e)
-
+'''
+create_snapshots('AppId')
