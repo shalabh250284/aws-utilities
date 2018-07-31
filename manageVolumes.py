@@ -225,6 +225,7 @@ def createSnapshots(AppId):
     logger.info("Initiating a snapshot for this instance")
     logger.debug("Finding the stack Name this Instance belongs to")
     stackName = getTagValue('aws:cloudformation:stack-name')
+
     logger.info("The Stack name of this Instance is %s. Backups will be tagged with the Stack Name", stackName)
     logger.debug("Proceeding to prepare for Snapshots")
 
@@ -235,7 +236,7 @@ def createSnapshots(AppId):
             if i[0] == '/':
                 i = i.split()
                 d[i[0]] = i[1]
-        
+        return 
         logger.info("Fetchig EC2 information to grab Volumes from the mapped devices")
         response = getEc2Info()
         volumes = response['Reservations'][0]['Instances'][0]['BlockDeviceMappings']
@@ -243,7 +244,7 @@ def createSnapshots(AppId):
 
         logger.debug("Iterating over the Volumes to Snapshot each of them")
         for vol in volumes:
-            logger.debug("Lets ensure that the Device is present in /proc/mounts")
+            logger.debug("Lets ensure that the Device %s is present in /proc/mounts",vol['DeviceName'])
             if d.has_key(vol['DeviceName']):
                 logger.debug("Device %s found in /proc/mounts, we will snapshot the disk by its VolumeId", vol['DeviceName'])
                 vol_id = vol['Ebs']['VolimeId']
@@ -289,14 +290,17 @@ def createSnapshots(AppId):
                 cleanupSnapshots(snap_desc,AppId)
                 
             else:
-                logger.debug("I dont have a key")
+                logger.debug("I dont have a Volume on disk - %s to backup as Snapshot", vol['DeviceName'])
     except Exception as e:
         logger.error("Error fetching EC2 Parameters: %s", e)
         return False
         
-'''
 def cleanupSnapshots(Name,AppId):
-    stackName = _tag_value('aws:cloudformation:stack-name')
+    logger.info("Initiating cleanup of Snapshots")
+    logger.debug("Finding the stack Name this Instance belongs to")
+    stackName = getTagValue('aws:cloudformation:stack-name')
+
+    logger.debug("Preparing Filters for cleanup process")
     filters = [
         { 'Name': 'tag:Name', 'Values': [Name], },
         { 'Name': 'tag:AppId', 'Values': [AppId], },
@@ -304,6 +308,8 @@ def cleanupSnapshots(Name,AppId):
         { 'Name': 'tag:Type', 'Values': ['Automated'], },
         { 'Name': 'status', 'Values': ['completed'], },
     ]
+
+    logger.info("Initiating the process to cleanup Snapshot")
     try:
         response = ec2_client.describe_snapshots(Filters=filters)
         response['Snapshots'].sort(key=itemgetter('StartTime'),reverse=True)
@@ -313,5 +319,6 @@ def cleanupSnapshots(Name,AppId):
                 ec2_client.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
             except Exception as e:
                 logger.error("Error Deleting snap: %s", e)
-'''
-create_snapshots('AppId')
+    except Exception as e:
+        logger.error("Error fetching EC2 Parameters: %s", e)
+        return False
